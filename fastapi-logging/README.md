@@ -1,4 +1,3 @@
-
 # FastAPI - Logging Exploration
 
 Goal of this app:
@@ -8,4 +7,214 @@ Goal of this app:
 - Store them in Minio
 - Read them using [Clickhouse](https://www.youtube.com/watch?v=JLk-pcWZSGc)
 
+Clickhouse commands
 
+```sql
+CREATE TABLE logsQueue (
+  line String
+)
+
+ENGINE = S3Queue(
+  'http://minio:9000/buckets/vector-bucket/*',
+  "minioadmin",
+  "minioadmin",
+  LineAsString,
+  "gzip"
+)
+
+SETTINGS
+  mode = 'ordered'
+  s3queue_enable_logging_to_s3queue_log = 1
+;
+
+
+
+
+
+CREATE TABLE minio_logs
+ (
+    container_created_at DateTime,
+    container_id String,
+    container_name String,
+    host String,
+    image String,
+    timestamp DateTime,
+    level String,
+    message String,
+    source_type String,
+ )
+ ENGINE = S3('http://minio:9000/vector-bucket/*', 'minioadmin', 'minioadmin', 'JSONEachRow');
+
+
+DESCRIBE s3(
+  'http://minio:9000/vector-bucket/*',
+    'JSONLines'
+);
+DESCRIBE s3(
+  'http://minio:9000/vector-bucket/*',
+  'minioadmin',
+  'minioadmin',
+  'JSONLines'
+);
+
+```
+
+- Take logs from minio and import them to clickhouse
+
+```sql
+CREATE TABLE raw_logs (
+    container_created_at String,
+    container_id String,
+    container_name String,
+    host String,
+    image String,
+    label Tuple(
+        `com.docker.compose.config-hash` String,
+        `com.docker.compose.container-number` String,
+        `com.docker.compose.depends_on` String,
+        `com.docker.compose.image` String,
+        `com.docker.compose.oneoff` String,
+        `com.docker.compose.project` String,
+        `com.docker.compose.project.config_files` String,
+        `com.docker.compose.project.working_dir` String,
+        `com.docker.compose.replace` String,
+        `com.docker.compose.service` String,
+        `com.docker.compose.version` String
+    ),
+    message String,
+    source_type String,
+    stream String,
+    timestamp String
+) ENGINE = MergeTree()
+ORDER BY tuple();
+
+
+CREATE TABLE logs (
+    event String,
+    timestamp DateTime,
+    logger String,
+    level String,
+    func_name String,
+    lineno Int32,
+    client Nullable(String),
+    url Nullable(String),
+    uri Nullable(String),
+    method Nullable(String),
+    headers Nullable(String),
+    request_id Nullable(String),
+    extra Nullable(String),
+    raw_message String
+) ENGINE = MergeTree()
+ORDER BY timestamp;
+
+
+# Materialized view
+
+CREATE MATERIALIZED VIEW logs_mv TO logs AS
+SELECT
+    JSONExtractString(message, 'event') AS event,
+    parseDateTimeBestEffort(JSONExtractString(message, 'timestamp')) AS timestamp,
+    JSONExtractString(message, 'logger') AS logger,
+    JSONExtractString(message, 'level') AS level,
+    JSONExtractString(message, 'func_name') AS func_name,
+    JSONExtractInt(message, 'lineno') AS lineno,
+    JSONExtractString(message, 'client') AS client,
+    JSONExtractString(message, 'url') AS url,
+    JSONExtractString(message, 'uri') AS uri,
+    JSONExtractString(message, 'method') AS method,
+    JSONExtractString(message, 'headers') AS headers,
+    JSONExtractString(message, 'request_id') AS request_id,
+    JSONExtractString(message, 'extra') AS extra,
+    message AS raw_message
+FROM raw_logs;
+
+```
+
+```sql
+INSERT INTO raw_logs
+    SELECT *
+    FROM s3('http://minio:9000/vector-bucket/*', 'minioadmin', 'minioadmin', 'JSONLines')
+
+FROM logs SELECT logger, COUNT(logger) as n GROUP BY logger ORDER BY n DESC;
+```
+
+S3 Queue (need zookeeper)
+
+```sql
+
+CREATE TABLE s3queue_raw_logs(
+    container_created_at String,
+    container_id String,
+    container_name String,
+    host String,
+    image String,
+    label Tuple(
+        `com.docker.compose.config-hash` String,
+        `com.docker.compose.container-number` String,
+        `com.docker.compose.depends_on` String,
+        `com.docker.compose.image` String,
+        `com.docker.compose.oneoff` String,
+        `com.docker.compose.project` String,
+        `com.docker.compose.project.config_files` String,
+        `com.docker.compose.project.working_dir` String,
+        `com.docker.compose.replace` String,
+        `com.docker.compose.service` String,
+        `com.docker.compose.version` String
+    ),
+    message String,
+    source_type String,
+    stream String,
+    timestamp String
+) ENGINE=S3Queue('http://minio:9000/vector-bucket/*', 'minioadmin', 'minioadmin', 'JSONLines')
+SETTINGS
+    mode = 'unordered';
+
+'https://clickhouse-public-datasets.s3.amazonaws.com/my-test-bucket-768/*', 'CSV', 'gzip',
+
+
+CREATE TABLE logs_v2 (
+    event String,
+    timestamp DateTime,
+    logger String,
+    level String,
+    func_name String,
+    lineno Int32,
+    client Nullable(String),
+    url Nullable(String),
+    uri Nullable(String),
+    method Nullable(String),
+    response_status_code Nullable(String),
+    headers Nullable(String),
+    request_id Nullable(String),
+    extra Nullable(String),
+    raw_message String
+) ENGINE = MergeTree()
+ORDER BY timestamp;
+
+
+# Materialized view
+
+CREATE MATERIALIZED VIEW logs_mv_v2 TO logs_v2 AS
+SELECT
+    JSONExtractString(message, 'event') AS event,
+    parseDateTimeBestEffort(JSONExtractString(message, 'timestamp')) AS timestamp,
+    JSONExtractString(message, 'logger') AS logger,
+    JSONExtractString(message, 'level') AS level,
+    JSONExtractString(message, 'func_name') AS func_name,
+    JSONExtractInt(message, 'lineno') AS lineno,
+    JSONExtractString(message, 'client') AS client,
+    JSONExtractString(message, 'url') AS url,
+    JSONExtractString(message, 'uri') AS uri,
+    JSONExtractString(message, 'method') AS method,
+    JSONExtractString(message, 'response_status_code') AS response_status_code,
+    JSONExtractString(message, 'headers') AS headers,
+    JSONExtractString(message, 'request_id') AS request_id,
+    JSONExtractString(message, 'extra') AS extra,
+    message AS raw_message
+FROM s3queue_raw_logs;
+
+
+FROM logs_v2 SELECT logger, COUNT(logger) as n GROUP BY logger ORDER BY n DESC;
+FROM logs_v2 SELECT level, COUNT(level) as n GROUP BY level ORDER BY n DESC;
+
+```

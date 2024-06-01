@@ -1,0 +1,91 @@
+#                                    __   __  __
+#                                    \ \ / / / /
+#                                     \ V / / /
+#                                      \_/  \/
+#
+#                                    V E C T O R
+#                                   Configuration
+#
+# ------------------------------------------------------------------------------
+# Website: https://vector.dev
+# Docs: https://vector.dev/docs
+# Chat: https://chat.vector.dev
+# ------------------------------------------------------------------------------
+
+# Change this to use a non-default directory for Vector data storage:
+# data_dir: "/var/lib/vector"
+
+# transforms:
+#   parse_logs:
+#     type: "remap"
+#     inputs: ["dummy_logs"]
+#     source: |
+#       . = parse_syslog!(string!(.message))
+
+# transforms:
+#   parse_logs:
+#     type: "remap"
+#     inputs: ["dummy_logs"]
+#     source: |
+#       . = parse_syslog!(string!(.message))
+
+# Print parsed logs to stdout
+
+sources:
+  docker_logs_source:
+    type: docker_logs
+    include_containers:
+      - api
+
+sinks:
+  console:
+    type: console
+    inputs:
+      - docker_logs_source
+    target: stdout
+    encoding:
+      codec: json
+
+  my_s3_sink:
+    type: aws_s3
+    inputs:
+      - docker_logs_source
+    bucket: vector-bucket
+    endpoint: http://minio:9000
+    region: us-east-1
+    auth:
+      access_key_id: minioadmin
+      secret_access_key: minioadmin
+    framing:
+      method: newline_delimited
+    encoding:
+      codec: json
+# Vector's GraphQL API (disabled by default)
+# Uncomment to try it out with the `vector top` command or
+# in your browser at http://localhost:8686
+# api:
+#   enabled: true
+#   address: "127.0.0.1:8686"
+#
+#
+#
+# api:
+#   enabled: true
+#   address: 0.0.0.0:8686
+#
+# sources:
+#   api_source:
+#     type: file
+#     include:
+#       - "/var/log/app.log"
+#     read_from: beginning
+#
+# sinks:
+#   console:
+#     inputs:
+#       - api_source
+#     target: stdout
+#     type: console
+#     encoding:
+#       codec: "json"
+#

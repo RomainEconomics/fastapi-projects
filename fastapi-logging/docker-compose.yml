@@ -1,0 +1,79 @@
+services:
+  api:
+    container_name: api
+    command: python -m main
+    restart: always
+    build:
+      context: ./volumes/fastapi/
+    volumes:
+      - ./volumes/fastapi:/code
+      # - ./volumes/fastapi/log:/var/log/app.log
+    ports:
+      - "8000:8000"
+    depends_on:
+      - clickhouse
+      - minio
+
+  vector:
+    image: timberio/vector:0.37.1-alpine
+    container_name: vector
+    hostname: vector
+    ports:
+      - "8686:8686"
+    volumes:
+      - ./volumes/vector:/etc/vector:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      # - ./volumes/fastapi/log:/var/log
+    depends_on:
+      - api
+
+  ### Clickhouse Database
+  clickhouse:
+    image: clickhouse/clickhouse-server
+    user: "101:101"
+    container_name: clickhouse
+    hostname: clickhouse
+    volumes:
+      - ${PWD}/volumes/clickhouse/etc/clickhouse-server/config.d/config.xml:/etc/clickhouse-server/config.d/config.xml
+      - ${PWD}/volumes/clickhouse/etc/clickhouse-server/users.d/users.xml:/etc/clickhouse-server/users.d/users.xml
+      # https://github.com/ClickHouse/examples/blob/main/docker-compose-recipes/recipes/ch-and-vector/fs/volumes/clickhouse/docker-entrypoint-initdb.d/init-db.sh
+      # - ${PWD}/volumes/clickhouse/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9010:9010"
+    depends_on:
+      - clickhouse-keeper
+  clickhouse-keeper:
+    image: "clickhouse/clickhouse-keeper"
+    user: "101:101"
+    container_name: clickhouse-keeper
+    hostname: clickhouse-keeper
+    volumes:
+      - ${PWD}/volumes/clickhouse-keeper/etc/clickhouse-keeper/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml
+    ports:
+      - "127.0.0.1:9181:9181"
+
+  ### MinIO for flow storage
+  minio:
+    image: minio/minio:latest
+    entrypoint:
+      [
+        "minio",
+        "server",
+        "--address",
+        "0.0.0.0:9000",
+        "--console-address",
+        "0.0.0.0:9001",
+        "/data",
+      ]
+    volumes:
+      - "${PWD}/volumes/minio:/data"
+    ports:
+      - 9000:9000
+      - 9001:9001
+
+volumes:
+  clickhouse:
+  api:
+  vector:
+  minio:
